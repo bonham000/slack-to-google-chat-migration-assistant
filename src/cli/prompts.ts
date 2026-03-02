@@ -118,7 +118,7 @@ export async function runCli(): Promise<MigrationConfig> {
     }),
   ) as MigrationMode;
 
-  // --- For status/finalize, we don't need credentials or scope ---------------
+  // --- Status mode: no credentials needed ------------------------------------
   if (mode === 'status') {
     return buildConfig({
       serviceAccountKeyPath: '',
@@ -131,11 +131,7 @@ export async function runCli(): Promise<MigrationConfig> {
     });
   }
 
-  // --- Get credentials -------------------------------------------------------
-  let serviceAccountKeyPath = '';
-  let adminEmail = '';
-
-  // Check if we have saved config
+  // --- Load saved credentials if available -----------------------------------
   let savedKeyPath: string | null = null;
   let savedAdminEmail: string | null = null;
 
@@ -151,115 +147,139 @@ export async function runCli(): Promise<MigrationConfig> {
     }
   }
 
-  if (mode === 'finalize' && savedKeyPath && savedAdminEmail) {
-    serviceAccountKeyPath = savedKeyPath;
-    adminEmail = savedAdminEmail;
-    p.log.info(`Using saved credentials (${adminEmail})`);
-  } else if (mode !== 'finalize' || !savedKeyPath) {
-    // Ask for dry-run first (affects whether credentials are required)
-    const dryRun = handleCancel(
-      await p.confirm({
-        message: 'Run in dry-run mode? (preview only, no Google API calls)',
-        initialValue: true,
-      }),
-    );
-
-    if (!dryRun) {
-      serviceAccountKeyPath = handleCancel(
-        await p.text({
-          message: 'Path to Google service account key JSON:',
-          initialValue: savedKeyPath ?? undefined,
-          validate: (v) => {
-            if (!v.trim()) return 'Path is required';
-            if (!existsSync(v.trim())) return 'File not found';
-            const validation = validateServiceAccountKey(v.trim());
-            if (!validation.valid) return validation.error;
-          },
-        }),
-      );
-
-      adminEmail = handleCancel(
-        await p.text({
-          message: 'Google Workspace admin email (for impersonation):',
-          initialValue: savedAdminEmail ?? undefined,
-          validate: (v) => {
-            if (!v.trim()) return 'Email is required';
-            if (!v.includes('@')) return 'Must be a valid email address';
-          },
-        }),
-      );
-    }
-
-    // --- Time scope ------------------------------------------------------------
-    let timeScope: TimeScope = { type: 'full' };
-
-    if (mode === 'new' || mode === 'resume') {
-      const scopeChoice = handleCancel(
-        await p.select({
-          message: 'Migration scope:',
-          options: [
-            {
-              value: '7',
-              label: 'Last 7 days',
-              hint: 'quick test',
-            },
-            {
-              value: '30',
-              label: 'Last 30 days',
-              hint: 'broader test',
-            },
-            { value: 'full', label: 'Full history' },
-            { value: 'custom', label: 'Custom date range' },
-          ],
-        }),
-      );
-
-      if (scopeChoice === 'custom') {
-        const startStr = handleCancel(
-          await p.text({
-            message: 'Start date (YYYY-MM-DD):',
-            validate: (v) => {
-              if (isNaN(Date.parse(v))) return 'Invalid date format';
-            },
-          }),
-        );
-        const endStr = handleCancel(
-          await p.text({
-            message: 'End date (YYYY-MM-DD):',
-            validate: (v) => {
-              if (isNaN(Date.parse(v))) return 'Invalid date format';
-            },
-          }),
-        );
-        timeScope = {
-          type: 'custom',
-          startDate: new Date(startStr),
-          endDate: new Date(endStr),
-        };
-      } else if (scopeChoice !== 'full') {
-        timeScope = { type: 'last_n_days', days: parseInt(scopeChoice, 10) };
-      }
-    }
-
+  // --- Finalize mode: requires live credentials, no dry-run ------------------
+  if (mode === 'finalize') {
+    const { keyPath, email } = await promptForCredentials(savedKeyPath, savedAdminEmail);
     return buildConfig({
-      serviceAccountKeyPath,
-      workspaceAdminEmail: adminEmail,
+      serviceAccountKeyPath: keyPath,
+      workspaceAdminEmail: email,
       slackExportPath: exportPath,
       databasePath: dbPath,
-      dryRun,
+      dryRun: false,
       mode,
-      timeScope,
+      timeScope: { type: 'full' },
     });
   }
 
-  // Finalize with saved credentials
+  // --- New / Resume migration ------------------------------------------------
+
+  // Ask for dry-run first (affects whether credentials are required)
+  const dryRun = handleCancel(
+    await p.confirm({
+      message: 'Run in dry-run mode? (preview only, no Google API calls)',
+      initialValue: true,
+    }),
+  );
+
+  let serviceAccountKeyPath = '';
+  let adminEmail = '';
+
+  if (!dryRun) {
+    const creds = await promptForCredentials(savedKeyPath, savedAdminEmail);
+    serviceAccountKeyPath = creds.keyPath;
+    adminEmail = creds.email;
+  }
+
+  // --- Time scope ------------------------------------------------------------
+  let timeScope: TimeScope = { type: 'full' };
+
+  const scopeChoice = handleCancel(
+    await p.select({
+      message: 'Migration scope:',
+      options: [
+        { value: '7', label: 'Last 7 days', hint: 'quick test' },
+        { value: '30', label: 'Last 30 days', hint: 'broader test' },
+        { value: 'full', label: 'Full history' },
+        { value: 'custom', label: 'Custom date range' },
+      ],
+    }),
+  );
+
+  if (scopeChoice === 'custom') {
+    const startStr = handleCancel(
+      await p.text({
+        message: 'Start date (YYYY-MM-DD):',
+        validate: (v) => {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(v.trim()))
+            return 'Use YYYY-MM-DD format';
+          if (isNaN(Date.parse(v.trim()))) return 'Invalid date';
+        },
+      }),
+    );
+    const endStr = handleCancel(
+      await p.text({
+        message: 'End date (YYYY-MM-DD):',
+        validate: (v) => {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(v.trim()))
+            return 'Use YYYY-MM-DD format';
+          if (isNaN(Date.parse(v.trim()))) return 'Invalid date';
+          if (new Date(v.trim()) < new Date(startStr))
+            return 'End date must be after start date';
+        },
+      }),
+    );
+    timeScope = {
+      type: 'custom',
+      startDate: new Date(startStr),
+      endDate: new Date(endStr),
+    };
+  } else if (scopeChoice !== 'full') {
+    timeScope = { type: 'last_n_days', days: parseInt(scopeChoice, 10) };
+  }
+
   return buildConfig({
     serviceAccountKeyPath,
     workspaceAdminEmail: adminEmail,
     slackExportPath: exportPath,
     databasePath: dbPath,
-    dryRun: false,
+    dryRun,
     mode,
-    timeScope: { type: 'full' },
+    timeScope,
   });
+}
+
+/**
+ * Prompt for Google service account credentials, reusing saved values if available.
+ */
+async function promptForCredentials(
+  savedKeyPath: string | null,
+  savedAdminEmail: string | null,
+): Promise<{ keyPath: string; email: string }> {
+  if (savedKeyPath && savedAdminEmail && existsSync(savedKeyPath)) {
+    const reuse = handleCancel(
+      await p.confirm({
+        message: `Use saved credentials? (${savedAdminEmail})`,
+        initialValue: true,
+      }),
+    );
+    if (reuse) {
+      return { keyPath: savedKeyPath, email: savedAdminEmail };
+    }
+  }
+
+  const keyPath = handleCancel(
+    await p.text({
+      message: 'Path to Google service account key JSON:',
+      initialValue: savedKeyPath ?? undefined,
+      validate: (v) => {
+        if (!v.trim()) return 'Path is required';
+        if (!existsSync(v.trim())) return 'File not found';
+        const validation = validateServiceAccountKey(v.trim());
+        if (!validation.valid) return validation.error;
+      },
+    }),
+  );
+
+  const email = handleCancel(
+    await p.text({
+      message: 'Google Workspace admin email (for impersonation):',
+      initialValue: savedAdminEmail ?? undefined,
+      validate: (v) => {
+        if (!v.trim()) return 'Email is required';
+        if (!v.includes('@')) return 'Must be a valid email address';
+      },
+    }),
+  );
+
+  return { keyPath, email };
 }

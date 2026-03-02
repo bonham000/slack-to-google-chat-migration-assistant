@@ -5,9 +5,9 @@ import {
   displayPostMigrationSummary,
   displayMigrationStatus,
 } from './cli/summary';
-import { createProgressReporter } from './cli/progress';
-import { Migrator } from './core/migrator';
-import { readChannelMessages } from './services/slack/message-reader';
+import { Migrator, type MigratorCallbacks } from './core/migrator';
+
+let activeMigrator: Migrator | null = null;
 
 async function main() {
   try {
@@ -22,25 +22,61 @@ async function main() {
       return;
     }
 
-    // --- Parse export and show summary ---
-    const s = p.spinner();
-    s.start('Parsing Slack export...');
+    // --- Parse export, resolve users ---
+    const parseSpinner = p.spinner();
+    parseSpinner.start('Parsing Slack export...');
 
-    const progress = createProgressReporter();
+    // Per-channel spinner driven by lifecycle callbacks
+    let channelSpinner: ReturnType<typeof p.spinner> | null = null;
 
-    const onProgress = (channel: string, current: number, total: number) => {
-      progress.updateChannel(channel, current, total);
+    const callbacks: MigratorCallbacks = {
+      onProgress(_channel, current, total) {
+        channelSpinner?.message(
+          `Migrating #${_channel} (${current}/${total} messages)`,
+        );
+      },
+
+      onChannelStart(channel, messageCount) {
+        channelSpinner = p.spinner();
+        channelSpinner.start(
+          `Migrating #${channel} (0/${messageCount} messages)`,
+        );
+      },
+
+      onChannelFinish(channel, result) {
+        if (!channelSpinner) return;
+
+        if (result.status === 'already_finalized') {
+          channelSpinner.stop(`#${channel}: already finalized, skipped`);
+        } else if (
+          result.messagesCreated === 0 &&
+          result.messagesFailed === 0
+        ) {
+          channelSpinner.stop(`#${channel}: no messages in scope`);
+        } else {
+          const parts: string[] = [];
+          if (result.messagesCreated > 0)
+            parts.push(`${result.messagesCreated} created`);
+          if (result.messagesSkipped > 0)
+            parts.push(`${result.messagesSkipped} skipped`);
+          if (result.messagesFailed > 0)
+            parts.push(`${result.messagesFailed} failed`);
+          channelSpinner.stop(`#${channel}: ${parts.join(', ')}`);
+        }
+        channelSpinner = null;
+      },
     };
 
-    const onUserResolution = (matched: number, total: number) => {
-      // This callback fires during Migrator.create, we'll show the result after
-    };
-
-    const migrator = await Migrator.create(config, onProgress, onUserResolution);
-    s.stop('Export parsed and users resolved.');
+    const migrator = await Migrator.create(config, callbacks);
+    activeMigrator = migrator;
+    parseSpinner.stop('Export parsed and users resolved.');
 
     // Show summary
-    displayExportSummary(migrator.getExportData(), migrator.getUserMapResult());
+    displayExportSummary(
+      migrator.getExportData(),
+      migrator.getUserMapResult(),
+      config.timeScope,
+    );
 
     // --- Finalize mode ---
     if (config.mode === 'finalize') {
@@ -66,7 +102,6 @@ async function main() {
     }
 
     // --- New or Resume migration ---
-    // Confirm before starting
     const scopeDesc =
       config.timeScope.type === 'last_n_days'
         ? `last ${config.timeScope.days} days`
@@ -87,26 +122,13 @@ async function main() {
       return;
     }
 
-    // Save credentials path for future runs
-    if (!config.dryRun && config.serviceAccountKeyPath) {
-      // Already saved in Migrator.create via stateDb.setConfigValue
-    }
-
-    // Run migration with per-channel progress
-    const exportData = migrator.getExportData();
-    const channelMessages = new Map<string, number>();
-    for (const name of exportData.channelNames) {
-      channelMessages.set(
-        name,
-        readChannelMessages(exportData.rootDir, name, config.timeScope).length,
-      );
-    }
-
+    // Run migration — channel progress driven by callbacks above
     const summary = await migrator.migrate();
 
     // Show results
     displayPostMigrationSummary(summary, config.dryRun);
     migrator.close();
+    activeMigrator = null;
 
     if (config.dryRun) {
       p.outro('Dry run complete. No changes were made to Google Chat.');
@@ -118,12 +140,14 @@ async function main() {
   } catch (err) {
     p.cancel('Migration failed.');
     console.error(err);
+    activeMigrator?.close();
     process.exit(1);
   }
 }
 
-// Graceful shutdown
+// Graceful shutdown — close DB cleanly
 process.on('SIGINT', () => {
+  activeMigrator?.close();
   p.cancel('\nInterrupted. Your progress has been saved. Re-run to resume.');
   process.exit(130);
 });

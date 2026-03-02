@@ -46,7 +46,7 @@ export class MigrationStateDB {
 
   isMessageMigrated(slackTs: string, slackChannel: string): boolean {
     const result = this.db.prepare(QUERIES.isMessageMigrated).get(slackTs, slackChannel);
-    return result !== null;
+    return result != null; // loose equality catches both null and undefined (Bun compat)
   }
 
   recordMessage(row: MigratedMessageRow): void {

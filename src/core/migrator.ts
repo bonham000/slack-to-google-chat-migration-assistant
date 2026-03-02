@@ -8,6 +8,7 @@ import type {
 import { MigrationStateDB } from '../db/state';
 import { parseExport } from '../services/slack/export-parser';
 import { buildUserMap } from '../services/slack/user-mapper';
+import { readChannelMessages } from '../services/slack/message-reader';
 import { ChatAPI } from '../services/google/chat-api';
 import { DryRunChatAPI } from '../services/dry-run';
 import { RateLimiter } from '../services/google/rate-limiter';
@@ -16,8 +17,15 @@ import {
   createDirectoryClient,
 } from '../services/google/auth';
 import { DirectoryAPI } from '../services/google/directory-api';
-import { ChannelProcessor, type ProgressCallback } from './channel-processor';
+import { ChannelProcessor, type ProgressCallback, type ChannelLifecycleCallback } from './channel-processor';
 import { info, warn, error as logError } from '../utils/logger';
+
+export interface MigratorCallbacks {
+  onProgress?: ProgressCallback;
+  onChannelStart?: (channel: string, messageCount: number) => void;
+  onChannelFinish?: (channel: string, result: import('../types').ChannelResult) => void;
+  onUserResolution?: (matched: number, total: number) => void;
+}
 
 export class Migrator {
   private stateDb: MigrationStateDB;
@@ -26,6 +34,7 @@ export class Migrator {
   private userMapResult: UserMapResult;
   private config: MigrationConfig;
   private channelProcessor: ChannelProcessor;
+  private callbacks: MigratorCallbacks;
 
   private constructor(
     stateDb: MigrationStateDB,
@@ -33,13 +42,14 @@ export class Migrator {
     exportData: ParsedExport,
     userMapResult: UserMapResult,
     config: MigrationConfig,
-    onProgress?: ProgressCallback,
+    callbacks: MigratorCallbacks = {},
   ) {
     this.stateDb = stateDb;
     this.chatApi = chatApi;
     this.exportData = exportData;
     this.userMapResult = userMapResult;
     this.config = config;
+    this.callbacks = callbacks;
 
     this.channelProcessor = new ChannelProcessor(
       chatApi,
@@ -48,7 +58,7 @@ export class Migrator {
       userMapResult.userMap,
       userMapResult.displayNames,
       exportData.rootDir,
-      onProgress,
+      callbacks.onProgress,
     );
   }
 
@@ -58,8 +68,7 @@ export class Migrator {
    */
   static async create(
     config: MigrationConfig,
-    onProgress?: ProgressCallback,
-    onUserResolution?: (matched: number, total: number) => void,
+    callbacks: MigratorCallbacks = {},
   ): Promise<Migrator> {
     // 1. Open/create SQLite database
     const stateDb = new MigrationStateDB(config.databasePath);
@@ -119,26 +128,41 @@ export class Migrator {
           const resolution = await directoryApi.resolveUsers(emails);
           let verified = 0;
 
+          // Collect IDs to demote (don't mutate Map during iteration)
+          const toDemote: string[] = [];
           for (const [slackId, email] of userMapResult.userMap) {
             if (!resolution.get(email)) {
-              // Email not found in Google Workspace — demote to fallback
-              userMapResult.userMap.delete(slackId);
-              userMapResult.unmappedUsers.push(
-                exportData.users.find((u) => u.id === slackId)!,
-              );
-              warn(`User ${email} not found in Google Workspace, using fallback`);
+              toDemote.push(slackId);
             } else {
               verified++;
             }
           }
 
-          onUserResolution?.(verified, emails.length);
+          for (const slackId of toDemote) {
+            const email = userMapResult.userMap.get(slackId)!;
+            userMapResult.userMap.delete(slackId);
+            const user = exportData.users.find((u) => u.id === slackId);
+            if (user) {
+              userMapResult.unmappedUsers.push(user);
+            }
+            // Update DB to reflect demotion
+            stateDb.upsertUserMapping({
+              slack_id: slackId,
+              email,
+              display_name: userMapResult.displayNames.get(slackId) ?? slackId,
+              match_type: 'fallback',
+              is_bot: 0,
+            });
+            warn(`User ${email} not found in Google Workspace, using fallback`);
+          }
+
+          callbacks.onUserResolution?.(verified, emails.length);
         }
       } catch (err) {
         warn('Could not verify users against Directory API, proceeding with email-based mapping', {
           error: err instanceof Error ? err.message : String(err),
         });
-        onUserResolution?.(userMapResult.userMap.size, userMapResult.userMap.size);
+        callbacks.onUserResolution?.(userMapResult.userMap.size, userMapResult.userMap.size);
       }
 
       const rateLimiter = new RateLimiter();
@@ -167,7 +191,7 @@ export class Migrator {
       exportData,
       userMapResult,
       config,
-      onProgress,
+      callbacks,
     );
   }
 
@@ -201,12 +225,21 @@ export class Migrator {
           continue;
         }
 
-        info(`Processing channel #${channelName}`);
+        // Notify CLI of channel start
+        const messageCount = readChannelMessages(
+          this.exportData.rootDir,
+          channelName,
+          this.config.timeScope,
+        ).length;
+        this.callbacks.onChannelStart?.(channelName, messageCount);
 
         const result = await this.channelProcessor.processChannel(
           channelName,
           channelMeta,
         );
+
+        // Notify CLI of channel finish
+        this.callbacks.onChannelFinish?.(channelName, result);
 
         summary.channelsProcessed.push(channelName);
         summary.messagesCreated += result.messagesCreated;
@@ -216,11 +249,6 @@ export class Migrator {
         if (result.status === 'completed' && result.messagesCreated > 0) {
           summary.spacesCreated++;
         }
-
-        info(
-          `#${channelName}: ${result.messagesCreated} created, ` +
-            `${result.messagesSkipped} skipped, ${result.messagesFailed} failed`,
-        );
       }
 
       this.stateDb.completeRun(runId, summary);

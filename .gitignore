@@ -9,3 +9,4 @@ service-account*.json
 .env
 .DS_Store
 __pycache__/
+slack-data/

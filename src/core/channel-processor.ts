@@ -30,6 +30,11 @@ export type ProgressCallback = (
   total: number,
 ) => void;
 
+export type ChannelLifecycleCallback = {
+  onChannelStart?: (channel: string, messageCount: number) => void;
+  onChannelFinish?: (channel: string, result: ChannelResult) => void;
+};
+
 export class ChannelProcessor {
   constructor(
     private chatApi: ChatAPI | DryRunChatAPI,
@@ -177,11 +182,13 @@ export class ChannelProcessor {
       createTime: slackTsToRfc3339(uniqueTs),
     };
 
-    // Threading: use thread_ts as the threadKey
+    // Threading: only set threadKey for messages that are part of a thread
+    const isThreadParent = msg.thread_ts && msg.thread_ts === msg.ts;
     const isThreadReply = msg.thread_ts && msg.thread_ts !== msg.ts;
-    payload.thread = {
-      threadKey: msg.thread_ts ?? msg.ts,
-    };
+
+    if (isThreadParent || isThreadReply) {
+      payload.thread = { threadKey: msg.thread_ts };
+    }
 
     // Generate a deterministic message ID from the Slack timestamp
     const messageId = `slack-${msg.ts.replace('.', '-')}`;

@@ -4,6 +4,7 @@ import type {
   MigrationStatus,
   ParsedExport,
   UserMapResult,
+  TimeScope,
 } from '../types';
 import { countChannelMessages } from '../services/slack/message-reader';
 
@@ -13,10 +14,11 @@ import { countChannelMessages } from '../services/slack/message-reader';
 export function displayExportSummary(
   exportData: ParsedExport,
   userMapResult: UserMapResult,
+  timeScope?: TimeScope,
 ): void {
   let totalMessages = 0;
   for (const name of exportData.channelNames) {
-    totalMessages += countChannelMessages(exportData.rootDir, name);
+    totalMessages += countChannelMessages(exportData.rootDir, name, timeScope);
   }
 
   const lines = [
