@@ -1,0 +1,4 @@
+[
+  {"id":"C001","name":"general","created":1700000000,"creator":"U001","members":["U001","U002","U003"],"topic":{"value":"General discussion"},"purpose":{"value":"Company-wide channel"}},
+  {"id":"C002","name":"random","created":1700000100,"creator":"U001","members":["U001","U002"]}
+]

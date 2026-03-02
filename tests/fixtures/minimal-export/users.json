@@ -1,0 +1,6 @@
+[
+  {"id":"U001","name":"jsmith","real_name":"John Smith","is_bot":false,"profile":{"email":"john@example.com","real_name":"John Smith","display_name":"Johnny"}},
+  {"id":"U002","name":"jdoe","real_name":"Jane Doe","is_bot":false,"profile":{"email":"jane@example.com","real_name":"Jane Doe"}},
+  {"id":"U003","name":"nomail","real_name":"No Email User","is_bot":false,"profile":{"real_name":"No Email User"}},
+  {"id":"B001","name":"githubbot","real_name":"GitHub","is_bot":true,"profile":{"real_name":"GitHub"}}
+]

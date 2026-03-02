@@ -1,0 +1,4 @@
+[
+  {"type":"message","user":"U001","text":"Day 2 message","ts":"1705398600.000000"},
+  {"type":"message","user":"U002","text":"Check out <https://example.com|this link>","ts":"1705398700.000000","files":[{"name":"report.pdf","title":"Q4 Report","mimetype":"application/pdf","size":102400}]}
+]

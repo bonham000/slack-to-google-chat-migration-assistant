@@ -1,0 +1,24 @@
+{
+  "name": "slack-to-google-chat-migration-assistant",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "build:macos-arm": "bun build --compile --target=bun-darwin-arm64 src/index.ts --outfile dist/migrate",
+    "build:macos-x64": "bun build --compile --target=bun-darwin-x64 src/index.ts --outfile dist/migrate",
+    "build:windows": "bun build --compile --target=bun-windows-x64 src/index.ts --outfile dist/migrate.exe",
+    "test": "bun test",
+    "test:watch": "bun test --watch"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.9.1",
+    "adm-zip": "^0.5.16",
+    "google-auth-library": "^9.15.1",
+    "googleapis": "^146.0.0"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
+}

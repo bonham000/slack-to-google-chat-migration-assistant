@@ -1,0 +1,8 @@
+[
+  {"type":"message","user":"U001","text":"Good morning team!","ts":"1705312200.000000"},
+  {"type":"message","user":"U002","text":"Morning! The PR is up for review","ts":"1705312320.000000"},
+  {"type":"message","subtype":"bot_message","bot_id":"B001","username":"GitHub","text":"PR #42 opened by jsmith","ts":"1705312400.000000"},
+  {"type":"message","user":"U001","text":"Starting the thread","ts":"1705312500.000000","thread_ts":"1705312500.000000","reply_count":2},
+  {"type":"message","user":"U002","text":"Reply in thread","ts":"1705312600.000000","thread_ts":"1705312500.000000","parent_user_id":"U001"},
+  {"type":"message","subtype":"channel_join","user":"U003","text":"<@U003> has joined the channel","ts":"1705312700.000000"}
+]
