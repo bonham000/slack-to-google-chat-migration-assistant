@@ -56,5 +56,8 @@ export const BOT_SUBTYPES = new Set([
 // Default state database filename
 export const DEFAULT_DB_FILENAME = 'migration-state.db';
 
+// Directory to scan for Slack exports
+export const SLACK_DATA_DIR = 'slack-data';
+
 // Google Chat message reply option for thread replies
 export const REPLY_MESSAGE_FALLBACK = 'REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD';

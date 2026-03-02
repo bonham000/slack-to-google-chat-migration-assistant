@@ -1,10 +1,10 @@
 import * as p from '@clack/prompts';
-import { existsSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readdirSync, statSync } from 'fs';
+import { join, basename } from 'path';
 import type { MigrationConfig, MigrationMode, TimeScope } from '../types';
 import { buildConfig } from '../core/config';
 import { validateServiceAccountKey } from '../services/google/auth';
-import { DEFAULT_DB_FILENAME } from '../constants';
+import { DEFAULT_DB_FILENAME, SLACK_DATA_DIR } from '../constants';
 
 function cancelAndExit(): never {
   p.cancel('Migration cancelled.');
@@ -17,15 +17,31 @@ function handleCancel<T>(value: T | symbol): T {
 }
 
 /**
- * Auto-detect a .zip file in the current directory.
+ * Find .zip files and directories inside the slack-data/ folder.
  */
-function findZipInCwd(): string | null {
+function findExportsInSlackData(): { value: string; label: string; hint?: string }[] {
+  const dir = join(process.cwd(), SLACK_DATA_DIR);
+  if (!existsSync(dir)) return [];
+
   try {
-    const files = readdirSync(process.cwd());
-    const zips = files.filter((f) => f.endsWith('.zip'));
-    return zips.length === 1 ? join(process.cwd(), zips[0]) : null;
+    const entries = readdirSync(dir);
+    const options: { value: string; label: string; hint?: string }[] = [];
+
+    for (const entry of entries) {
+      if (entry.startsWith('.')) continue;
+      const fullPath = join(dir, entry);
+      const stat = statSync(fullPath);
+
+      if (entry.endsWith('.zip') && stat.isFile()) {
+        options.push({ value: fullPath, label: entry, hint: 'zip archive' });
+      } else if (stat.isDirectory()) {
+        options.push({ value: fullPath, label: entry, hint: 'extracted directory' });
+      }
+    }
+
+    return options;
   } catch {
-    return null;
+    return [];
   }
 }
 
@@ -46,19 +62,22 @@ export async function runCli(): Promise<MigrationConfig> {
 
   // --- Get export path -------------------------------------------------------
   let exportPath: string;
-  const autoZip = findZipInCwd();
+  const slackDataExports = findExportsInSlackData();
 
-  if (autoZip) {
-    const useDetected = handleCancel(
-      await p.confirm({
-        message: `Found ${autoZip}. Use this Slack export?`,
-        initialValue: true,
+  if (slackDataExports.length > 0) {
+    const options = [
+      ...slackDataExports,
+      { value: '__manual__', label: 'Enter path manually' },
+    ];
+
+    const selected = handleCancel(
+      await p.select({
+        message: 'Select a Slack export:',
+        options,
       }),
-    );
+    ) as string;
 
-    if (useDetected) {
-      exportPath = autoZip;
-    } else {
+    if (selected === '__manual__') {
       exportPath = handleCancel(
         await p.text({
           message: 'Path to Slack export (.zip file or extracted directory):',
@@ -68,6 +87,8 @@ export async function runCli(): Promise<MigrationConfig> {
           },
         }),
       );
+    } else {
+      exportPath = selected;
     }
   } else {
     exportPath = handleCancel(
