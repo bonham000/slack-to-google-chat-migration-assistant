@@ -26,33 +26,34 @@ async function main() {
     const parseSpinner = p.spinner();
     parseSpinner.start('Parsing Slack export...');
 
-    // Per-channel spinner driven by lifecycle callbacks
-    let channelSpinner: ReturnType<typeof p.spinner> | null = null;
+    // Single migration spinner + indented per-channel log lines
+    let migrationSpinner: ReturnType<typeof p.spinner> | null = null as ReturnType<typeof p.spinner> | null;
 
     const callbacks: MigratorCallbacks = {
       onProgress(_channel, current, total) {
-        channelSpinner?.message(
+        migrationSpinner?.message(
           `Migrating #${_channel} (${current}/${total} messages)`,
         );
       },
 
       onChannelStart(channel, messageCount) {
-        channelSpinner = p.spinner();
-        channelSpinner.start(
-          `Migrating #${channel} (0/${messageCount} messages)`,
-        );
+        if (!migrationSpinner) {
+          migrationSpinner = p.spinner();
+          migrationSpinner.start(`Migrating #${channel} (0/${messageCount} messages)`);
+        } else {
+          migrationSpinner.message(`Migrating #${channel} (0/${messageCount} messages)`);
+        }
       },
 
       onChannelFinish(channel, result) {
-        if (!channelSpinner) return;
-
+        let detail: string;
         if (result.status === 'already_finalized') {
-          channelSpinner.stop(`#${channel}: already finalized, skipped`);
+          detail = 'already finalized, skipped';
         } else if (
           result.messagesCreated === 0 &&
           result.messagesFailed === 0
         ) {
-          channelSpinner.stop(`#${channel}: no messages in scope`);
+          detail = 'no messages in scope';
         } else {
           const parts: string[] = [];
           if (result.messagesCreated > 0)
@@ -61,9 +62,9 @@ async function main() {
             parts.push(`${result.messagesSkipped} skipped`);
           if (result.messagesFailed > 0)
             parts.push(`${result.messagesFailed} failed`);
-          channelSpinner.stop(`#${channel}: ${parts.join(', ')}`);
+          detail = parts.join(', ');
         }
-        channelSpinner = null;
+        p.log.info(`#${channel}: ${detail}`);
       },
     };
 
@@ -122,8 +123,9 @@ async function main() {
       return;
     }
 
-    // Run migration — channel progress driven by callbacks above
+    // Run migration — single spinner with per-channel log lines
     const summary = await migrator.migrate();
+    migrationSpinner?.stop('All channels processed.');
 
     // Show results
     displayPostMigrationSummary(summary, config.dryRun);
