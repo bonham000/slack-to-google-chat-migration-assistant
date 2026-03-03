@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { SlackMessage, TimeScope } from '../../types';
+import { warn } from '../../utils/logger';
 
 /**
  * Apply a TimeScope filter to a numeric timestamp (seconds since epoch).
@@ -50,9 +51,17 @@ export function readChannelMessages(
 
   for (const file of files) {
     const filePath = path.join(channelDir, file);
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    const messages: SlackMessage[] = JSON.parse(raw);
-    allMessages.push(...messages);
+    try {
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        allMessages.push(...parsed);
+      } else {
+        warn(`Skipping ${filePath}: expected an array of messages`);
+      }
+    } catch (err) {
+      warn(`Skipping ${filePath}: ${err instanceof Error ? err.message : 'parse error'}`);
+    }
   }
 
   // Sort by timestamp ascending

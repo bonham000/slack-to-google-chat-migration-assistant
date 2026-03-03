@@ -190,9 +190,13 @@ export function parseExport(zipPathOrDir: string): ParsedExport {
 
     // Include if the directory contains any .json files
     const dirPath = path.join(rootDir, entry.name);
-    const files = fs.readdirSync(dirPath);
-    if (files.some((f) => f.endsWith('.json'))) {
-      channelNameSet.add(entry.name);
+    try {
+      const files = fs.readdirSync(dirPath);
+      if (files.some((f) => f.endsWith('.json'))) {
+        channelNameSet.add(entry.name);
+      }
+    } catch {
+      // Skip directories we can't read (permissions, etc.)
     }
   }
 

@@ -90,9 +90,16 @@ export class MigrationStateDB {
     googleSpaceId: string,
     members: { slackUserId: string; email: string | null }[],
   ): void {
-    const stmt = this.db.prepare(QUERIES.insertSpaceMember);
-    for (const m of members) {
-      stmt.run(googleSpaceId, m.slackUserId, m.email);
+    this.db.exec('BEGIN');
+    try {
+      const stmt = this.db.prepare(QUERIES.insertSpaceMember);
+      for (const m of members) {
+        stmt.run(googleSpaceId, m.slackUserId, m.email);
+      }
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
     }
   }
 

@@ -57,8 +57,8 @@ export function displayPostMigrationSummary(
   dryRun: boolean,
 ): void {
   const lines = [
-    `Channels processed: ${summary.channelsProcessed.length}`,
-    `Spaces created:     ${summary.spacesCreated}`,
+    `Channels processed: ${summary.channelsProcessed.length.toLocaleString()}`,
+    `Spaces created:     ${summary.spacesCreated.toLocaleString()}`,
     `Messages created:   ${summary.messagesCreated.toLocaleString()}`,
     `Messages skipped:   ${summary.messagesSkipped.toLocaleString()}`,
   ];
