@@ -1,9 +1,11 @@
 import type {
   SlackChannel,
+  SlackChannelType,
   SlackMessage,
   MigrationConfig,
   ChannelResult,
   ChatMessagePayload,
+  ChatSpacePayload,
 } from '../types';
 import type { MigrationStateDB } from '../db/state';
 import type { ChatAPI } from '../services/google/chat-api';
@@ -18,8 +20,11 @@ import { slackTsToRfc3339, ensureUniqueTimestamp } from '../utils/timestamp';
 import {
   SYSTEM_SUBTYPES,
   SPACE_TYPE,
+  SPACE_TYPE_GROUP_CHAT,
   SPACE_THREADING_STATE,
   SPACE_NAME_PREFIX,
+  DM_DISPLAY_PREFIX,
+  GROUP_DM_DISPLAY_PREFIX,
   REPLY_MESSAGE_FALLBACK,
 } from '../constants';
 import { error as logError } from '../utils/logger';
@@ -46,13 +51,93 @@ export class ChannelProcessor {
     private onProgress?: ProgressCallback,
   ) {}
 
-  async processChannel(
-    channelName: string,
+  /**
+   * Build a display name for a conversation based on its type.
+   */
+  getDisplayName(channelMeta: SlackChannel): string {
+    const channelType = channelMeta.channelType ?? 'public_channel';
+
+    switch (channelType) {
+      case 'dm': {
+        const names = (channelMeta.members ?? []).map(
+          (id) => this.displayNames.get(id) ?? id,
+        );
+        return `${DM_DISPLAY_PREFIX}${names.join(', ')}`;
+      }
+      case 'group_dm': {
+        const names = (channelMeta.members ?? []).map(
+          (id) => this.displayNames.get(id) ?? id,
+        );
+        if (names.length > 4) {
+          return `${GROUP_DM_DISPLAY_PREFIX}${names.slice(0, 3).join(', ')} +${names.length - 3} others`;
+        }
+        return `${GROUP_DM_DISPLAY_PREFIX}${names.join(', ')}`;
+      }
+      case 'private_channel':
+      case 'public_channel':
+      default:
+        return `${SPACE_NAME_PREFIX}${channelMeta.name ?? channelMeta.id}`;
+    }
+  }
+
+  /**
+   * Build the space creation payload based on channel type.
+   */
+  private buildSpacePayload(
     channelMeta: SlackChannel,
+    displayName: string,
+  ): ChatSpacePayload {
+    const channelType = channelMeta.channelType ?? 'public_channel';
+    const createTime = channelMeta.created
+      ? slackTsToRfc3339(`${channelMeta.created}.000000`)
+      : undefined;
+
+    const payload: ChatSpacePayload = {
+      displayName,
+      spaceType: SPACE_TYPE,
+      importMode: true,
+      spaceThreadingState: SPACE_THREADING_STATE,
+      createTime,
+    };
+
+    switch (channelType) {
+      case 'private_channel':
+        payload.accessSettings = { accessState: 'PRIVATE' };
+        break;
+      case 'dm':
+      case 'group_dm':
+        payload.spaceType = SPACE_TYPE_GROUP_CHAT;
+        break;
+    }
+
+    return payload;
+  }
+
+  /**
+   * Get a label for CLI display (channel name or DM description).
+   */
+  getDisplayLabel(channelMeta: SlackChannel): string {
+    const channelType = channelMeta.channelType ?? 'public_channel';
+    if (channelType === 'dm' || channelType === 'group_dm') {
+      return this.getDisplayName(channelMeta);
+    }
+    return `#${channelMeta.name ?? channelMeta.id}`;
+  }
+
+  async processChannel(
+    channelMeta: SlackChannel,
+    messageDirPath?: string,
   ): Promise<ChannelResult> {
+    const channelKey = channelMeta.name ?? channelMeta.id;
+    const channelType = channelMeta.channelType ?? 'public_channel';
+
     // 1. Resolve or create the Google Chat space
     let spaceName: string;
-    const spaceRow = this.stateDb.getSpace(channelName);
+
+    // Look up by channel ID first, then fall back to name (backwards compat)
+    const spaceRow =
+      this.stateDb.getSpaceByChannelId(channelMeta.id) ??
+      this.stateDb.getSpace(channelKey);
 
     if (spaceRow && !spaceRow.import_mode_active) {
       return {
@@ -68,27 +153,34 @@ export class ChannelProcessor {
       spaceName = spaceRow.google_space_id;
     } else {
       // Create new import-mode space
-      const createTime = channelMeta.created
-        ? slackTsToRfc3339(`${channelMeta.created}.000000`)
-        : undefined;
-
-      const result = await this.chatApi.createImportSpace({
-        displayName: `${SPACE_NAME_PREFIX}${channelName}`,
-        spaceType: SPACE_TYPE,
-        importMode: true,
-        spaceThreadingState: SPACE_THREADING_STATE,
-        createTime,
-      });
+      const displayName = this.getDisplayName(channelMeta);
+      const payload = this.buildSpacePayload(channelMeta, displayName);
+      const result = await this.chatApi.createImportSpace(payload);
 
       spaceName = result.name;
-      this.stateDb.upsertSpace(channelName, spaceName);
+      this.stateDb.upsertSpaceWithType(
+        channelKey,
+        spaceName,
+        channelMeta.id,
+        channelType,
+      );
+
+      // Plan membership for post-finalization
+      if (channelMeta.members && channelMeta.members.length > 0) {
+        const members = channelMeta.members.map((slackUserId) => ({
+          slackUserId,
+          email: this.userMap.get(slackUserId) ?? null,
+        }));
+        this.stateDb.insertSpaceMembers(spaceName, members);
+      }
     }
 
     // 2. Load messages filtered by time scope
     const messages = readChannelMessages(
       this.exportRoot,
-      channelName,
+      channelKey,
       this.config.timeScope,
+      messageDirPath,
     );
 
     // 3. Process each message
@@ -99,10 +191,10 @@ export class ChannelProcessor {
 
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
-      this.onProgress?.(channelName, i + 1, messages.length);
+      this.onProgress?.(channelKey, i + 1, messages.length);
 
       // Idempotency: skip if already migrated
-      if (this.stateDb.isMessageMigrated(msg.ts, channelName)) {
+      if (this.stateDb.isMessageMigrated(msg.ts, channelKey)) {
         skipped++;
         continue;
       }
@@ -116,7 +208,7 @@ export class ChannelProcessor {
       try {
         const sent = await this.sendMessage(
           spaceName,
-          channelName,
+          channelKey,
           msg,
           usedTimestamps,
         );
@@ -127,7 +219,7 @@ export class ChannelProcessor {
         }
       } catch (err) {
         failed++;
-        logError(`Failed to send message ${msg.ts} in #${channelName}`, {
+        logError(`Failed to send message ${msg.ts} in ${channelKey}`, {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -143,7 +235,7 @@ export class ChannelProcessor {
 
   private async sendMessage(
     spaceName: string,
-    channelName: string,
+    channelKey: string,
     msg: SlackMessage,
     usedTimestamps: Set<string>,
   ): Promise<boolean> {
@@ -208,7 +300,7 @@ export class ChannelProcessor {
     // Record in state DB
     this.stateDb.recordMessage({
       slack_ts: msg.ts,
-      slack_channel: channelName,
+      slack_channel: channelKey,
       google_space_id: spaceName,
       google_message_name: result.name,
       thread_key: msg.thread_ts ?? msg.ts,

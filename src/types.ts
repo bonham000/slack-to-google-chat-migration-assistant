@@ -51,17 +51,23 @@ export interface SlackMessage {
   parent_user_id?: string;
 }
 
+export type SlackChannelType = 'public_channel' | 'private_channel' | 'dm' | 'group_dm';
+
 export interface SlackChannel {
   id: string;
-  name: string;
+  name?: string;
   created?: number;
   creator?: string;
   is_archived?: boolean;
   is_general?: boolean;
   is_private?: boolean;
+  is_mpim?: boolean;
+  is_im?: boolean;
   members?: string[];
   topic?: { value: string; creator?: string; last_set?: number };
   purpose?: { value: string; creator?: string; last_set?: number };
+  /** Set by the parser, not present in raw Slack JSON */
+  channelType?: SlackChannelType;
 }
 
 // =============================================================================
@@ -95,6 +101,10 @@ export interface ParsedExport {
   users: SlackUser[];
   channelNames: string[];
   wasExtracted: boolean;
+  /** All conversations (public, private, DMs, group DMs) */
+  conversations: SlackChannel[];
+  /** Map from channel ID → message directory path on disk */
+  conversationDirMap: Map<string, string>;
 }
 
 // =============================================================================
@@ -118,6 +128,17 @@ export interface SpaceRow {
   import_mode_active: number;
   created_at: string;
   finalized_at: string | null;
+  slack_channel_id: string | null;
+  slack_channel_type: string | null;
+  members_added: number;
+}
+
+export interface SpaceMemberRow {
+  google_space_id: string;
+  slack_user_id: string;
+  email: string | null;
+  status: string;
+  added_at: string | null;
 }
 
 export interface MigratedMessageRow {
@@ -156,11 +177,12 @@ export interface MigrationRunRow {
 // =============================================================================
 
 export interface ChatSpacePayload {
-  displayName: string;
+  displayName?: string;
   spaceType: string;
   importMode: boolean;
   spaceThreadingState: string;
   createTime?: string;
+  accessSettings?: { accessState: string };
 }
 
 export interface ChatMessagePayload {

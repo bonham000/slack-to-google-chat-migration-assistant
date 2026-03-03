@@ -1,0 +1,4 @@
+[
+  { "type": "message", "ts": "1705300500.000001", "user": "U001", "text": "Group chat message" },
+  { "type": "message", "ts": "1705300600.000002", "user": "U003", "text": "Reply from Bob" }
+]

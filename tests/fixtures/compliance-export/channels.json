@@ -1,0 +1,9 @@
+[
+  {
+    "id": "C001",
+    "name": "general",
+    "created": 1700000000,
+    "members": ["U001", "U002", "U003"],
+    "is_private": false
+  }
+]

@@ -12,7 +12,8 @@ export class DryRunChatAPI {
   async createImportSpace(payload: ChatSpacePayload): Promise<{ name: string }> {
     this.spaceCounter++;
     const fakeName = `spaces/DRY_RUN_${this.spaceCounter}`;
-    this.log.push(`[DRY RUN] Create space: "${payload.displayName}" → ${fakeName}`);
+    const access = payload.accessSettings?.accessState ? ` [${payload.accessSettings.accessState}]` : '';
+    this.log.push(`[DRY RUN] Create ${payload.spaceType}${access}: "${payload.displayName ?? '(unnamed)'}" → ${fakeName}`);
     return { name: fakeName };
   }
 

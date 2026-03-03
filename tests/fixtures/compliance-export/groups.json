@@ -1,0 +1,9 @@
+[
+  {
+    "id": "G001",
+    "name": "secret-project",
+    "created": 1700100000,
+    "members": ["U001", "U002"],
+    "is_private": true
+  }
+]

@@ -1,8 +1,9 @@
 import { Database } from 'bun:sqlite';
-import { SCHEMA_SQL } from './schema';
+import { SCHEMA_SQL, MIGRATION_STATEMENTS } from './schema';
 import { QUERIES } from './queries';
 import type {
   SpaceRow,
+  SpaceMemberRow,
   MigratedMessageRow,
   UserMappingRow,
   MigrationRunRow,
@@ -18,6 +19,21 @@ export class MigrationStateDB {
     this.db.exec('PRAGMA journal_mode=WAL');
     this.db.exec('PRAGMA foreign_keys=ON');
     this.db.exec(SCHEMA_SQL);
+    this.runMigrations();
+  }
+
+  /**
+   * Run schema migrations for existing databases.
+   * Each statement is idempotent — duplicate column errors are ignored.
+   */
+  private runMigrations(): void {
+    for (const sql of MIGRATION_STATEMENTS) {
+      try {
+        this.db.exec(sql);
+      } catch {
+        // Ignore errors (e.g. "duplicate column name") — means already migrated
+      }
+    }
   }
 
   // ── Spaces ──────────────────────────────────────────────────────────
@@ -40,6 +56,56 @@ export class MigrationStateDB {
 
   getAllSpaces(): SpaceRow[] {
     return this.db.prepare(QUERIES.getAllSpaces).all() as SpaceRow[];
+  }
+
+  getSpaceByChannelId(channelId: string): SpaceRow | null {
+    return this.db.prepare(QUERIES.getSpaceByChannelId).get(channelId) as SpaceRow | null;
+  }
+
+  upsertSpaceWithType(
+    channelName: string,
+    googleSpaceId: string,
+    channelId: string,
+    channelType: string,
+  ): void {
+    this.db.prepare(QUERIES.upsertSpaceWithType).run(
+      channelName,
+      googleSpaceId,
+      channelId,
+      channelType,
+    );
+  }
+
+  getSpacesNeedingMembers(): SpaceRow[] {
+    return this.db.prepare(QUERIES.getSpacesNeedingMembers).all() as SpaceRow[];
+  }
+
+  markMembersAdded(channelName: string): void {
+    this.db.prepare(QUERIES.markMembersAdded).run(channelName);
+  }
+
+  // ── Space Members ──────────────────────────────────────────────────
+
+  insertSpaceMembers(
+    googleSpaceId: string,
+    members: { slackUserId: string; email: string | null }[],
+  ): void {
+    const stmt = this.db.prepare(QUERIES.insertSpaceMember);
+    for (const m of members) {
+      stmt.run(googleSpaceId, m.slackUserId, m.email);
+    }
+  }
+
+  getPendingMembers(googleSpaceId: string): SpaceMemberRow[] {
+    return this.db.prepare(QUERIES.getPendingMembers).all(googleSpaceId) as SpaceMemberRow[];
+  }
+
+  updateMemberStatus(
+    googleSpaceId: string,
+    slackUserId: string,
+    status: string,
+  ): void {
+    this.db.prepare(QUERIES.updateMemberStatus).run(status, googleSpaceId, slackUserId);
   }
 
   // ── Messages ────────────────────────────────────────────────────────

@@ -17,17 +17,34 @@ export function displayExportSummary(
   timeScope?: TimeScope,
 ): void {
   let totalMessages = 0;
-  for (const name of exportData.channelNames) {
-    totalMessages += countChannelMessages(exportData.rootDir, name, timeScope);
+  for (const conv of exportData.conversations) {
+    const dirPath = exportData.conversationDirMap.get(conv.id);
+    const key = conv.name ?? conv.id;
+    totalMessages += countChannelMessages(exportData.rootDir, key, timeScope, dirPath);
   }
 
-  const lines = [
-    `Channels:       ${exportData.channelNames.length}`,
-    `Total messages: ${totalMessages.toLocaleString()}`,
-    `Users matched:  ${userMapResult.userMap.size} (by email)`,
-    `Users fallback: ${userMapResult.unmappedUsers.length} (will use [Name]: prefix)`,
-    `Bots:           ${userMapResult.botUsers.length} (will use [Name]: prefix)`,
-  ];
+  // Count by conversation type
+  const typeCounts = { public_channel: 0, private_channel: 0, dm: 0, group_dm: 0 };
+  for (const conv of exportData.conversations) {
+    const t = conv.channelType ?? 'public_channel';
+    if (t in typeCounts) typeCounts[t as keyof typeof typeCounts]++;
+  }
+
+  const lines: string[] = [];
+
+  if (typeCounts.public_channel > 0)
+    lines.push(`Public channels:  ${typeCounts.public_channel}`);
+  if (typeCounts.private_channel > 0)
+    lines.push(`Private channels: ${typeCounts.private_channel}`);
+  if (typeCounts.dm > 0)
+    lines.push(`DMs:              ${typeCounts.dm}`);
+  if (typeCounts.group_dm > 0)
+    lines.push(`Group DMs:        ${typeCounts.group_dm}`);
+
+  lines.push(`Total messages:   ${totalMessages.toLocaleString()}`);
+  lines.push(`Users matched:    ${userMapResult.userMap.size} (by email)`);
+  lines.push(`Users fallback:   ${userMapResult.unmappedUsers.length} (will use [Name]: prefix)`);
+  lines.push(`Bots:             ${userMapResult.botUsers.length} (will use [Name]: prefix)`);
 
   p.note(lines.join('\n'), 'Export Summary');
 }

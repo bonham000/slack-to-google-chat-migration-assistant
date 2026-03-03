@@ -1,0 +1,20 @@
+[
+  {
+    "id": "U001",
+    "name": "john",
+    "real_name": "John Smith",
+    "profile": { "email": "john@example.com", "display_name": "John Smith" }
+  },
+  {
+    "id": "U002",
+    "name": "jane",
+    "real_name": "Jane Doe",
+    "profile": { "email": "jane@example.com", "display_name": "Jane Doe" }
+  },
+  {
+    "id": "U003",
+    "name": "bob",
+    "real_name": "Bob Wilson",
+    "profile": { "email": "bob@example.com", "display_name": "Bob Wilson" }
+  }
+]

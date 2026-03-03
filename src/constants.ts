@@ -7,8 +7,11 @@ export const CHAT_IMPORT_SCOPE = 'https://www.googleapis.com/auth/chat.import';
 export const DIRECTORY_SCOPE = 'https://www.googleapis.com/auth/admin.directory.user.readonly';
 
 export const SPACE_TYPE = 'SPACE';
+export const SPACE_TYPE_GROUP_CHAT = 'GROUP_CHAT';
 export const SPACE_THREADING_STATE = 'THREADED_MESSAGES';
 export const SPACE_NAME_PREFIX = 'Slack #';
+export const DM_DISPLAY_PREFIX = 'DM: ';
+export const GROUP_DM_DISPLAY_PREFIX = 'Group DM: ';
 
 // Import mode rate limits
 export const IMPORT_MODE_MESSAGES_PER_MINUTE = 600;
@@ -58,6 +61,11 @@ export const DEFAULT_DB_FILENAME = 'migration-state.db';
 
 // Directory to scan for Slack exports
 export const SLACK_DATA_DIR = 'slack-data';
+
+// Slack export filenames
+export const SLACK_GROUPS_FILE = 'groups.json';
+export const SLACK_DMS_FILE = 'dms.json';
+export const SLACK_MPIMS_FILE = 'mpims.json';
 
 // Google Chat message reply option for thread replies
 export const REPLY_MESSAGE_FALLBACK = 'REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD';

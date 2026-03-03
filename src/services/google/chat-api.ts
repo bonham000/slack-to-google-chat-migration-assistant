@@ -14,16 +14,25 @@ export class ChatAPI {
 
   async createImportSpace(payload: ChatSpacePayload): Promise<{ name: string }> {
     const client = this.getClient(this.adminEmail);
+
+    const requestBody: Record<string, unknown> = {
+      spaceType: payload.spaceType,
+      importMode: payload.importMode,
+      spaceThreadingState: payload.spaceThreadingState,
+    };
+
+    if (payload.displayName) {
+      requestBody.displayName = payload.displayName;
+    }
+    if (payload.createTime) {
+      requestBody.createTime = payload.createTime;
+    }
+    if (payload.accessSettings) {
+      requestBody.accessSettings = payload.accessSettings;
+    }
+
     const result = await withRetry(() =>
-      client.spaces.create({
-        requestBody: {
-          displayName: payload.displayName,
-          spaceType: payload.spaceType,
-          importMode: payload.importMode,
-          spaceThreadingState: payload.spaceThreadingState,
-          createTime: payload.createTime,
-        },
-      }),
+      client.spaces.create({ requestBody }),
     );
     return { name: result.data.name! };
   }

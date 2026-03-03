@@ -19,6 +19,21 @@ export const QUERIES = {
 
   getAllSpaces: `SELECT * FROM spaces`,
 
+  getSpaceByChannelId: `SELECT * FROM spaces WHERE slack_channel_id = ?`,
+
+  upsertSpaceWithType: `
+    INSERT INTO spaces (slack_channel_name, google_space_id, slack_channel_id, slack_channel_type)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(slack_channel_name) DO UPDATE SET
+      google_space_id = excluded.google_space_id,
+      slack_channel_id = excluded.slack_channel_id,
+      slack_channel_type = excluded.slack_channel_type
+  `,
+
+  getSpacesNeedingMembers: `SELECT * FROM spaces WHERE import_mode_active = 0 AND members_added = 0`,
+
+  markMembersAdded: `UPDATE spaces SET members_added = 1 WHERE slack_channel_name = ?`,
+
   // Messages
   isMessageMigrated: `SELECT 1 FROM migrated_messages WHERE slack_ts = ? AND slack_channel = ? LIMIT 1`,
 
@@ -71,6 +86,20 @@ export const QUERIES = {
   `,
 
   getLastRun: `SELECT * FROM migration_runs ORDER BY id DESC LIMIT 1`,
+
+  // Space Members
+  insertSpaceMember: `
+    INSERT OR IGNORE INTO space_members (google_space_id, slack_user_id, email)
+    VALUES (?, ?, ?)
+  `,
+
+  getPendingMembers: `SELECT * FROM space_members WHERE google_space_id = ? AND status = 'pending'`,
+
+  updateMemberStatus: `
+    UPDATE space_members
+    SET status = ?, added_at = datetime('now')
+    WHERE google_space_id = ? AND slack_user_id = ?
+  `,
 
   // Config State
   getConfigValue: `SELECT value FROM config_state WHERE key = ?`,

@@ -4,7 +4,10 @@ CREATE TABLE IF NOT EXISTS spaces (
   google_space_id TEXT NOT NULL,
   import_mode_active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  finalized_at TEXT
+  finalized_at TEXT,
+  slack_channel_id TEXT,
+  slack_channel_type TEXT DEFAULT 'public_channel',
+  members_added INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS migrated_messages (
@@ -44,6 +47,35 @@ CREATE TABLE IF NOT EXISTS config_state (
   value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS space_members (
+  google_space_id TEXT NOT NULL,
+  slack_user_id TEXT NOT NULL,
+  email TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  added_at TEXT,
+  PRIMARY KEY (google_space_id, slack_user_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_channel ON migrated_messages(slack_channel);
 CREATE INDEX IF NOT EXISTS idx_messages_space ON migrated_messages(google_space_id);
+CREATE INDEX IF NOT EXISTS idx_spaces_channel_id ON spaces(slack_channel_id);
 `;
+
+/**
+ * Migration SQL for existing databases created before DM/private channel support.
+ * Each statement is run individually, wrapped in try/catch (idempotent).
+ */
+export const MIGRATION_STATEMENTS = [
+  `ALTER TABLE spaces ADD COLUMN slack_channel_id TEXT`,
+  `ALTER TABLE spaces ADD COLUMN slack_channel_type TEXT DEFAULT 'public_channel'`,
+  `ALTER TABLE spaces ADD COLUMN members_added INTEGER NOT NULL DEFAULT 0`,
+  `CREATE TABLE IF NOT EXISTS space_members (
+    google_space_id TEXT NOT NULL,
+    slack_user_id TEXT NOT NULL,
+    email TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    added_at TEXT,
+    PRIMARY KEY (google_space_id, slack_user_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_spaces_channel_id ON spaces(slack_channel_id)`,
+];

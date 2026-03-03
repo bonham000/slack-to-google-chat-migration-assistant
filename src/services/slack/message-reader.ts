@@ -32,8 +32,10 @@ export function readChannelMessages(
   exportRoot: string,
   channelName: string,
   timeScope?: TimeScope,
+  /** Override the default directory path (for DMs that use channel IDs) */
+  dirPath?: string,
 ): SlackMessage[] {
-  const channelDir = path.join(exportRoot, channelName);
+  const channelDir = dirPath ?? path.join(exportRoot, channelName);
 
   if (!fs.existsSync(channelDir)) {
     return [];
@@ -81,6 +83,7 @@ export function countChannelMessages(
   exportRoot: string,
   channelName: string,
   timeScope?: TimeScope,
+  dirPath?: string,
 ): number {
-  return readChannelMessages(exportRoot, channelName, timeScope).length;
+  return readChannelMessages(exportRoot, channelName, timeScope, dirPath).length;
 }

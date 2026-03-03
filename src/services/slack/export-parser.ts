@@ -1,8 +1,46 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import AdmZip from 'adm-zip';
-import type { SlackChannel, SlackUser, ParsedExport } from '../../types';
+import type { SlackChannel, SlackChannelType, SlackUser, ParsedExport } from '../../types';
 import { ExportParseError } from '../../errors';
+import {
+  SLACK_GROUPS_FILE,
+  SLACK_DMS_FILE,
+  SLACK_MPIMS_FILE,
+} from '../../constants';
+
+/**
+ * Parse an optional JSON file from the export, returning [] if missing.
+ */
+function parseOptionalJsonFile<T>(filePath: string): T[] {
+  if (!fs.existsSync(filePath)) return [];
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Find the message directory for a conversation.
+ * Tries by channel ID first (DMs/MPIMs use ID-based dirs), then by name.
+ */
+function findConversationDir(
+  rootDir: string,
+  conversation: SlackChannel,
+): string | null {
+  // Try by ID first (DMs and MPIMs use channel ID as directory name)
+  const byId = path.join(rootDir, conversation.id);
+  if (fs.existsSync(byId) && fs.statSync(byId).isDirectory()) return byId;
+
+  // Try by name (public/private channels in standard exports)
+  if (conversation.name) {
+    const byName = path.join(rootDir, conversation.name);
+    if (fs.existsSync(byName) && fs.statSync(byName).isDirectory()) return byName;
+  }
+
+  return null;
+}
 
 /**
  * Parse a Slack export from a .zip file or an already-extracted directory.
@@ -12,7 +50,7 @@ import { ExportParseError } from '../../errors';
  * directory it is used directly.
  *
  * Validates that `users.json` and `channels.json` exist and are parseable,
- * then discovers channel directories.
+ * then discovers all conversation types (public, private, DMs, group DMs).
  */
 export function parseExport(zipPathOrDir: string): ParsedExport {
   let rootDir: string;
@@ -75,7 +113,7 @@ export function parseExport(zipPathOrDir: string): ParsedExport {
     );
   }
 
-  // --- Validate and parse channels.json --------------------------------------
+  // --- Parse channels.json (required) ----------------------------------------
   const channelsPath = path.join(rootDir, 'channels.json');
   if (!fs.existsSync(channelsPath)) {
     throw new ExportParseError(
@@ -93,8 +131,51 @@ export function parseExport(zipPathOrDir: string): ParsedExport {
     );
   }
 
-  // --- Discover channel directories ------------------------------------------
-  const channelNamesFromJson = new Set(channels.map((c) => c.name));
+  // Tag public channels
+  for (const ch of channels) {
+    ch.channelType = 'public_channel';
+  }
+
+  // --- Parse optional export files (compliance export) -----------------------
+  const privateChannels = parseOptionalJsonFile<SlackChannel>(
+    path.join(rootDir, SLACK_GROUPS_FILE),
+  );
+  for (const ch of privateChannels) {
+    ch.channelType = 'private_channel';
+  }
+
+  const dms = parseOptionalJsonFile<SlackChannel>(
+    path.join(rootDir, SLACK_DMS_FILE),
+  );
+  for (const ch of dms) {
+    ch.channelType = 'dm';
+  }
+
+  const groupDms = parseOptionalJsonFile<SlackChannel>(
+    path.join(rootDir, SLACK_MPIMS_FILE),
+  );
+  for (const ch of groupDms) {
+    ch.channelType = 'group_dm';
+  }
+
+  // --- Build unified conversations list + directory map ----------------------
+  const conversations: SlackChannel[] = [
+    ...channels,
+    ...privateChannels,
+    ...dms,
+    ...groupDms,
+  ];
+
+  const conversationDirMap = new Map<string, string>();
+  for (const conv of conversations) {
+    const dir = findConversationDir(rootDir, conv);
+    if (dir) {
+      conversationDirMap.set(conv.id, dir);
+    }
+  }
+
+  // --- Backwards-compatible channelNames (public channels only) ---------------
+  const channelNamesFromJson = new Set(channels.map((c) => c.name).filter(Boolean) as string[]);
 
   const entries = fs.readdirSync(rootDir, { withFileTypes: true });
   const channelNameSet = new Set<string>();
@@ -102,13 +183,12 @@ export function parseExport(zipPathOrDir: string): ParsedExport {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
 
-    // Include if the directory name matches a channel in channels.json
     if (channelNamesFromJson.has(entry.name)) {
       channelNameSet.add(entry.name);
       continue;
     }
 
-    // Otherwise include if the directory contains any .json files
+    // Include if the directory contains any .json files
     const dirPath = path.join(rootDir, entry.name);
     const files = fs.readdirSync(dirPath);
     if (files.some((f) => f.endsWith('.json'))) {
@@ -124,5 +204,7 @@ export function parseExport(zipPathOrDir: string): ParsedExport {
     users,
     channelNames,
     wasExtracted,
+    conversations,
+    conversationDirMap,
   };
 }

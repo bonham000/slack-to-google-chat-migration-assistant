@@ -25,6 +25,8 @@ export interface MigratorCallbacks {
   onChannelStart?: (channel: string, messageCount: number) => void;
   onChannelFinish?: (channel: string, result: import('../types').ChannelResult) => void;
   onUserResolution?: (matched: number, total: number) => void;
+  onMembershipStart?: (channel: string, count: number) => void;
+  onMembershipFinish?: (channel: string, added: number, failed: number) => void;
 }
 
 export class Migrator {
@@ -196,7 +198,7 @@ export class Migrator {
   }
 
   /**
-   * Run the migration for all channels.
+   * Run the migration for all conversations (channels, DMs, group DMs).
    */
   async migrate(): Promise<MigrationSummary> {
     const runId = this.stateDb.startRun(
@@ -216,32 +218,35 @@ export class Migrator {
     };
 
     try {
-      for (const channelName of this.exportData.channelNames) {
-        const channelMeta = this.exportData.channels.find(
-          (c) => c.name === channelName,
-        );
-        if (!channelMeta) {
-          warn(`No metadata found for channel "${channelName}", skipping`);
+      for (const conversation of this.exportData.conversations) {
+        const channelKey = conversation.name ?? conversation.id;
+        const displayLabel = this.channelProcessor.getDisplayLabel(conversation);
+
+        // Resolve message directory (may be by ID for DMs)
+        const messageDirPath = this.exportData.conversationDirMap.get(conversation.id);
+        if (!messageDirPath) {
+          warn(`No message directory found for "${displayLabel}", skipping`);
           continue;
         }
 
         // Notify CLI of channel start
         const messageCount = readChannelMessages(
           this.exportData.rootDir,
-          channelName,
+          channelKey,
           this.config.timeScope,
+          messageDirPath,
         ).length;
-        this.callbacks.onChannelStart?.(channelName, messageCount);
+        this.callbacks.onChannelStart?.(displayLabel, messageCount);
 
         const result = await this.channelProcessor.processChannel(
-          channelName,
-          channelMeta,
+          conversation,
+          messageDirPath,
         );
 
         // Notify CLI of channel finish
-        this.callbacks.onChannelFinish?.(channelName, result);
+        this.callbacks.onChannelFinish?.(displayLabel, result);
 
-        summary.channelsProcessed.push(channelName);
+        summary.channelsProcessed.push(channelKey);
         summary.messagesCreated += result.messagesCreated;
         summary.messagesSkipped += result.messagesSkipped;
         summary.messagesFailed += result.messagesFailed;
@@ -264,6 +269,7 @@ export class Migrator {
 
   /**
    * Finalize all import-mode spaces, making them visible to users.
+   * After finalizing, adds members to each space.
    */
   async finalize(): Promise<number> {
     const spaces = this.stateDb.getUnfinalizedSpaces();
@@ -279,15 +285,59 @@ export class Migrator {
         await this.chatApi.completeImport(space.google_space_id);
         this.stateDb.markSpaceFinalized(space.slack_channel_name);
         finalized++;
-        info(`Finalized space for #${space.slack_channel_name}`);
+        info(`Finalized space for ${space.slack_channel_name}`);
+
+        // Add members after finalization
+        await this.addMembersToSpace(space.google_space_id, space.slack_channel_name);
       } catch (err) {
-        logError(`Failed to finalize #${space.slack_channel_name}`, {
+        logError(`Failed to finalize ${space.slack_channel_name}`, {
           error: err instanceof Error ? err.message : String(err),
         });
       }
     }
 
     return finalized;
+  }
+
+  /**
+   * Add planned members to a finalized space.
+   */
+  private async addMembersToSpace(
+    googleSpaceId: string,
+    channelName: string,
+  ): Promise<void> {
+    const pendingMembers = this.stateDb.getPendingMembers(googleSpaceId);
+    if (pendingMembers.length === 0) return;
+
+    this.callbacks.onMembershipStart?.(channelName, pendingMembers.length);
+
+    let added = 0;
+    let failed = 0;
+
+    for (const member of pendingMembers) {
+      // Resolve email — prefer what's in the member row, fall back to userMap
+      const email = member.email ?? this.userMapResult.userMap.get(member.slack_user_id);
+      if (!email) {
+        this.stateDb.updateMemberStatus(googleSpaceId, member.slack_user_id, 'failed');
+        failed++;
+        continue;
+      }
+
+      try {
+        await this.chatApi.addMember(googleSpaceId, email);
+        this.stateDb.updateMemberStatus(googleSpaceId, member.slack_user_id, 'added');
+        added++;
+      } catch (err) {
+        this.stateDb.updateMemberStatus(googleSpaceId, member.slack_user_id, 'failed');
+        failed++;
+        logError(`Failed to add member ${email} to ${channelName}`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    this.stateDb.markMembersAdded(channelName);
+    this.callbacks.onMembershipFinish?.(channelName, added, failed);
   }
 
   /**
